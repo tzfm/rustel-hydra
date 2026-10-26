@@ -1,0 +1,5 @@
+# Pin compiler, formatter, and lint behavior across supported environments.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "default"

@@ -1,0 +1,16 @@
+# Rust build and test output
+**/target/
+**/*.rs.bk
+
+# Editor, operating-system, and language caches
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+__pycache__/
+*.swp
+*.swo
+
+# Crash dumps
+/core
+/core.*

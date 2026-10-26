@@ -1,0 +1,39 @@
+[package]
+name = "rustel-hydra"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/tzfm/rustel-hydra"
+publish = false
+description = "Hydra live-coded video synth in native Rust: GLSL composed in code, rendered offscreen through wgpu"
+
+# The GLSL is composed in `glsl` and rendered in `native`. Shaders are compared
+# against hydra-synth's own output character for character rather than taken on
+# trust; see `tests/glsl_parity.rs`.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Headless GPU. No surface, no swapchain, no window: a terminal never shows a
+# GL context, it shows the pixels that came back. Vulkan, Metal and DX12 all
+# render offscreen natively, and lavapipe covers a machine with no GPU at all.
+wgpu = { version = "26", features = ["glsl"] }
+pollster = "0.4"
+
+[dev-dependencies]
+# The reference frames are a megabyte of RGBA that deflates to a tenth of
+# that.
+miniz_oxide = "0.8"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
+# Local iteration
+[profile.local]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
