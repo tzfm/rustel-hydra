@@ -240,6 +240,12 @@ mod tests {
                         url: "https://i.imgur.com/zFttbWq.jpg".into(),
                     },
                 },
+                HydraStatement::ConfigureSource {
+                    slot: 2,
+                    source: HydraSource::Video {
+                        url: "clips/loop.webm".into(),
+                    },
+                },
                 HydraStatement::ClearSource { slot: 1 },
             ],
             0,
@@ -399,26 +405,30 @@ mod tests {
             })
         ));
 
-        let image = |url: String| {
-            sketch(
-                vec![HydraStatement::ConfigureSource {
-                    slot: 0,
-                    source: HydraSource::ImageUrl { url },
-                }],
-                0,
-            )
-        };
-        assert_eq!(
-            image(String::new()).validate(),
-            Err(HydraProgramError::Empty("source URL"))
-        );
-        assert!(matches!(
-            image("x".repeat(MAX_HYDRA_TEXT_BYTES + 1)).validate(),
-            Err(HydraProgramError::TooLong {
-                what: "source URL",
-                ..
-            })
-        ));
+        let image = |url: String| HydraSource::ImageUrl { url };
+        let video = |url: String| HydraSource::Video { url };
+        for source in [image, video] {
+            let program = |url: String| {
+                sketch(
+                    vec![HydraStatement::ConfigureSource {
+                        slot: 0,
+                        source: source(url),
+                    }],
+                    0,
+                )
+            };
+            assert_eq!(
+                program(String::new()).validate(),
+                Err(HydraProgramError::Empty("source URL"))
+            );
+            assert!(matches!(
+                program("x".repeat(MAX_HYDRA_TEXT_BYTES + 1)).validate(),
+                Err(HydraProgramError::TooLong {
+                    what: "source URL",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

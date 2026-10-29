@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Current schema version of a recorded sketch.
-pub const HYDRA_PROGRAM_VERSION: u16 = 3;
+pub const HYDRA_PROGRAM_VERSION: u16 = 4;
 
 /// Drawing statements one sketch may carry.
 pub const MAX_HYDRA_STATEMENTS: usize = 64;
@@ -329,9 +329,12 @@ pub enum HydraStatement {
 pub enum HydraSource {
     /// `sN.initCam()`; no device means the platform default camera.
     Camera { device: Option<u32> },
-    /// `sN.initImage(url)`. The source loader accepts public HTTPS URLs;
-    /// insecure, local and private-network targets are rejected before I/O.
+    /// `sN.initImage(url)`. The host decides which addresses it reads. A host
+    /// must refuse a target it has not permitted before any I/O.
     ImageUrl { url: String },
+    /// `sN.initVideo(url)`: a looping, silent video. The same rule applies
+    /// as for an image.
+    Video { url: String },
 }
 
 /// What one evaluated score wants drawn.
@@ -475,7 +478,7 @@ impl HydraProgram {
                             found: usize::from(*slot),
                         });
                     }
-                    if let HydraSource::ImageUrl { url } = source {
+                    if let HydraSource::ImageUrl { url } | HydraSource::Video { url } = source {
                         if url.is_empty() {
                             return Err(HydraProgramError::Empty("source URL"));
                         }
