@@ -538,8 +538,8 @@ fn arguments(
                 )));
             }
             // A list where a float goes is hydra's animated argument, compiled
-            // into the shader around `time`. hydra's `bpm` stays at its
-            // default 30, since a score's assignment to it is refused.
+            // into the shader around `time` at hydra's default 30 bpm. The
+            // host scales a list's speed for a sketch that assigns `bpm`.
             Some(list @ HydraNode::List { .. }) if kind == "float" => {
                 list_expression(list, step.entry.name)?
             }

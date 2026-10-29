@@ -302,9 +302,8 @@ pub enum HydraStatement {
     /// Evaluate a chain for its effect, which for Hydra means `.out()`.
     #[serde(rename = "eval")]
     Evaluate { node: HydraNode },
-    /// Reserved wire shape for Hydra's settable globals. Validation currently
-    /// refuses it because silently discarding clock semantics is worse than a
-    /// clear unsupported error.
+    /// `speed = 2`: one of Hydra's clock settings, a finite number. See
+    /// [`HydraClock`]. Validation refuses any other name.
     #[serde(rename = "set")]
     Assign { name: String, value: HydraNode },
     /// Configure one of Hydra's four external texture inputs. Keeping this
@@ -335,6 +334,32 @@ pub enum HydraSource {
     /// `sN.initVideo(url)`: a looping, silent video. The same rule applies
     /// as for an image.
     Video { url: String },
+}
+
+/// Hydra's clock settings, as the assignments of one sketch leave them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HydraClock {
+    /// `speed`: how fast `time` runs. 1 is real time.
+    pub speed: f64,
+    /// `bpm`: the beats a minute that array arguments step at.
+    pub bpm: f64,
+    /// `fps`: the most frames a second the sketch draws. `None` draws every
+    /// frame the host asks for.
+    pub fps: Option<f64>,
+    /// `time`: the seconds the clock restarts from when the sketch is
+    /// applied. `None` keeps the clock running.
+    pub time: Option<f64>,
+}
+
+impl Default for HydraClock {
+    fn default() -> Self {
+        Self {
+            speed: 1.0,
+            bpm: 30.0,
+            fps: None,
+            time: None,
+        }
+    }
 }
 
 /// What one evaluated score wants drawn.
@@ -383,6 +408,28 @@ where
 }
 
 impl HydraProgram {
+    /// The clock settings this sketch leaves: its last assignment to each.
+    pub fn clock(&self) -> HydraClock {
+        let mut clock = HydraClock::default();
+        for statement in &self.statements {
+            let HydraStatement::Assign {
+                name,
+                value: HydraNode::Number { v },
+            } = statement
+            else {
+                continue;
+            };
+            match name.as_str() {
+                "speed" => clock.speed = *v,
+                "bpm" => clock.bpm = *v,
+                "fps" => clock.fps = Some(*v),
+                "time" => clock.time = Some(*v),
+                _ => {}
+            }
+        }
+        clock
+    }
+
     /// True when the score asked for nothing - the signal to stop drawing.
     pub fn is_empty(&self) -> bool {
         self.statements.is_empty() && self.raw.is_none()
@@ -468,7 +515,7 @@ impl HydraProgram {
                 HydraStatement::Assign { name, value } => {
                     check_identifier(name)?;
                     self.check_node(value, 0, &mut nodes)?;
-                    return Err(HydraProgramError::UnsupportedSetting(name.clone()));
+                    check_setting(name, value)?;
                 }
                 HydraStatement::ConfigureSource { slot, source } => {
                     if usize::from(*slot) >= HYDRA_SOURCE_SLOTS {
@@ -608,6 +655,32 @@ impl HydraProgram {
                 Ok(())
             }
         }
+    }
+}
+
+/// A clock setting must name one of Hydra's clock globals and hold a number
+/// in its range. The ranges keep `time` and the array steps finite as the
+/// `f32` values a shader reads.
+fn check_setting(name: &str, value: &HydraNode) -> Result<(), HydraProgramError> {
+    let HydraNode::Number { v } = value else {
+        return Err(HydraProgramError::InvalidOption(
+            "speed, bpm, fps and time take a number",
+        ));
+    };
+    let (range, why) = match name {
+        "speed" => (-1_000.0..=1_000.0, "speed must be from -1000 to 1000"),
+        "time" => (-1.0e9..=1.0e9, "time must be from -1e9 to 1e9 seconds"),
+        "bpm" => (
+            f64::MIN_POSITIVE..=10_000.0,
+            "bpm must be above 0 and at most 10000",
+        ),
+        "fps" => (1.0..=240.0, "fps must be from 1 to 240"),
+        _ => return Err(HydraProgramError::UnsupportedSetting(name.to_owned())),
+    };
+    if range.contains(v) {
+        Ok(())
+    } else {
+        Err(HydraProgramError::InvalidOption(why))
     }
 }
 

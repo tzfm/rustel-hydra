@@ -1132,6 +1132,36 @@ const FRAME_INTERVAL: Duration =
 /// The pace this frame runs at: the score program's own fps when one is
 /// installed, and the default interval when none is, so a preview or a
 /// theme alone keeps the usual cadence.
+/// Step every array argument at `bpm` instead of Hydra's default 30. An
+/// array's index runs at `time * speed * bpm / 60`, and the composer writes
+/// it for 30 bpm, so a list's own speed carries the ratio.
+fn step_arrays_at(program: &mut HydraProgram, bpm: f64) {
+    fn walk(node: &mut HydraNode, ratio: f64) {
+        match node {
+            HydraNode::List { v, speed, .. } => {
+                *speed *= ratio;
+                v.iter_mut().for_each(|entry| walk(entry, ratio));
+            }
+            HydraNode::Chain { args, calls, .. } => {
+                args.iter_mut().for_each(|arg| walk(arg, ratio));
+                calls
+                    .iter_mut()
+                    .flat_map(|call| call.args.iter_mut())
+                    .for_each(|arg| walk(arg, ratio));
+            }
+            _ => {}
+        }
+    }
+    if bpm == 30.0 {
+        return;
+    }
+    for statement in &mut program.statements {
+        if let HydraStatement::Evaluate { node } = statement {
+            walk(node, bpm / 30.0);
+        }
+    }
+}
+
 fn frame_interval(score_fps: Option<u32>) -> Duration {
     match score_fps {
         Some(fps) if fps > 0 => Duration::from_nanos(1_000_000_000 / u64::from(fps)),
@@ -1208,6 +1238,12 @@ fn worker(
     // Before the renderers, so it is dropped after them.
     let _gauges = GaugesClearedOnExit(shared);
     let mut score: Option<HydraProgram> = None;
+    // The score's own `time`: it runs at the sketch's `speed` and restarts
+    // where the sketch sets `time`.
+    let mut clock = crate::HydraClock::default();
+    let mut score_time = 0.0f64;
+    let mut ticked = Instant::now();
+    let mut score_drawn: Option<Instant> = None;
     let mut preview: Option<(HydraNode, u64)> = None;
     // Keep the command's epoch attached to its parsed node. Reading the
     // shared current epoch beside an older local node would let that old
@@ -1240,6 +1276,17 @@ fn worker(
                 Ok(Command::Exit) | Err(mpsc::TryRecvError::Disconnected) => return,
                 Ok(Command::Apply(program)) => {
                     score = *program;
+                    clock = score.as_ref().map(HydraProgram::clock).unwrap_or_default();
+                    if let Some(time) = clock.time {
+                        // From now: the time this turn already spent does
+                        // not count against the restarted clock.
+                        score_time = time;
+                        ticked = Instant::now();
+                    }
+                    if let Some(program) = score.as_mut() {
+                        step_arrays_at(program, clock.bpm);
+                    }
+                    score_drawn = None;
                     score_changed = true;
                     once.rearm();
                 }
@@ -1293,16 +1340,30 @@ fn worker(
         }
 
         let time = started.elapsed().as_secs_f32();
+        let now = Instant::now();
+        score_time += now.saturating_duration_since(ticked).as_secs_f64() * clock.speed;
+        ticked = now;
+        // `fps` draws less often than the host asks. The last frame stays.
+        let due = clock.fps.is_none_or(|fps| {
+            score_drawn
+                .is_none_or(|drawn| now.saturating_duration_since(drawn).as_secs_f64() >= 1.0 / fps)
+        });
         let drawing = shared.open.load(Ordering::Relaxed) && shared.drawing.load(Ordering::Relaxed);
-        if drawing && let Some(program) = &score {
+        if drawing && score.is_some() {
             renderer_used = Instant::now();
+        }
+        if drawing
+            && due
+            && let Some(program) = &score
+        {
+            score_drawn = Some(now);
             draw(
                 &mut renderer,
                 program,
                 shared,
                 events,
                 &mut once,
-                time,
+                score_time as f32,
                 &shared.deliver_score,
                 &shared.frames,
                 true,
@@ -1986,6 +2047,43 @@ mod frame_acknowledgement {
 mod tests {
     use super::*;
     use crate::{HydraCall, HydraOptions, HydraSource};
+
+    #[test]
+    fn bpm_steps_every_array_argument_at_its_rate() {
+        let list = |speed| HydraNode::List {
+            v: vec![HydraNode::Number { v: 3.0 }, HydraNode::Number { v: 4.0 }],
+            speed,
+            smooth: 0.0,
+            ease: "linear".into(),
+            offset: 0.0,
+        };
+        let mut program = HydraProgram {
+            statements: vec![HydraStatement::Evaluate {
+                node: HydraNode::Chain {
+                    head: "shape".into(),
+                    args: vec![list(1.0)],
+                    calls: vec![HydraCall {
+                        method: "rotate".into(),
+                        args: vec![list(2.0)],
+                    }],
+                },
+            }],
+            ..HydraProgram::default()
+        };
+        step_arrays_at(&mut program, 120.0);
+        let HydraStatement::Evaluate {
+            node: HydraNode::Chain { args, calls, .. },
+        } = &program.statements[0]
+        else {
+            panic!("the chain stays a chain");
+        };
+        assert_eq!(
+            args[0],
+            list(4.0),
+            "120 bpm steps four times as often as 30"
+        );
+        assert_eq!(calls[0].args[0], list(8.0));
+    }
 
     fn output(head: &str, slot: usize) -> HydraStatement {
         HydraStatement::Evaluate {
