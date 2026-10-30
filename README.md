@@ -27,7 +27,7 @@ shader first:
 
 ```toml
 [dependencies]
-rustel-hydra = { git = "https://github.com/tzfm/rustel-hydra", tag = "v0.1.0" }
+rustel-hydra = { git = "https://github.com/tzfm/rustel-hydra", tag = "v0.2.0" }
 ```
 
 ```rust

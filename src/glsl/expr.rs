@@ -5,8 +5,10 @@
 //! does not execute JavaScript callbacks.
 //!
 //! Supported expressions are limited to arithmetic, parentheses, a handful of
-//! `Math` functions, `time`, and `a.fft[n]`. Unsupported expressions are
-//! rejected rather than silently changing the sketch's behavior.
+//! `Math` functions, `time`, `width`, `height`, and `a.fft[n]`. Unsupported
+//! expressions are rejected rather than silently changing the sketch's
+//! behavior. `Math.random()` is a new value each frame, the same on every
+//! pixel, as a callback Hydra runs once a frame gives.
 
 /// The first `vec4` in the fixed-capacity audio uniform backing `a.fft`.
 pub const AUDIO_UNIFORM: &str = "_audio";
@@ -36,6 +38,7 @@ pub fn compile(source: &str) -> Result<String, ExprError> {
     let mut reader = Expr {
         bytes: body.trim().as_bytes(),
         at: 0,
+        randoms: 0,
     };
     let glsl = reader.expression(0)?;
     reader.space();
@@ -51,6 +54,8 @@ pub fn compile(source: &str) -> Result<String, ExprError> {
 struct Expr<'a> {
     bytes: &'a [u8],
     at: usize,
+    /// `Math.random()` calls so far, so each has a value of its own.
+    randoms: usize,
 }
 
 impl Expr<'_> {
@@ -156,6 +161,12 @@ impl Expr<'_> {
         if self.eat("time") {
             return Ok("time".into());
         }
+        if self.eat("width") {
+            return Ok("resolution.x".into());
+        }
+        if self.eat("height") {
+            return Ok("resolution.y".into());
+        }
         let number = self.number()?;
         // The digits go into the shader as written, and the shader reads them
         // as an f32. `1.2.3` would not lex, and a forty-digit integer - or
@@ -198,6 +209,18 @@ impl Expr<'_> {
             "round" => "ROUND".into(),
             "min" | "max" | "pow" | "atan" => name.clone(),
             "PI" => return Ok("3.1415926".into()),
+            "random" => {
+                if !(self.eat("(") && self.eat(")")) {
+                    return Err(ExprError("`Math.random` takes no arguments".into()));
+                }
+                // A hash of the frame's time: one value for every pixel, a
+                // new one each frame. Each call in a callback has its own.
+                self.randoms += 1;
+                return Ok(format!(
+                    "fract(sin(time * 78.233 + {}.0 * 12.9898) * 43758.5453)",
+                    self.randoms
+                ));
+            }
             other => return Err(ExprError(format!("`Math.{other}` is not compiled"))),
         };
         if !self.eat("(") {
@@ -283,13 +306,26 @@ mod tests {
     #[test]
     fn what_it_cannot_compile_it_names() {
         assert!(compile("() => shape(4)").is_err(), "a chain is not a value");
-        assert!(compile("() => Math.random()").is_err());
+        assert!(compile("() => Math.random(1)").is_err());
         assert_eq!(compile("() => a.fft[6]").as_deref(), Ok("_audio1[2]"));
         assert!(
             compile("() => a.fft[16]").is_err(),
             "there are sixteen bands"
         );
         assert!(compile("() => {fall}").is_err());
+    }
+
+    #[test]
+    fn the_size_and_a_random_value_read_the_frame() {
+        assert_eq!(
+            compile("() => width / height").as_deref(),
+            Ok("(resolution.x / resolution.y)")
+        );
+        let twice = compile("() => Math.random() - Math.random()").expect("random");
+        assert!(
+            twice.contains("+ 1.0 * 12.9898") && twice.contains("+ 2.0 * 12.9898"),
+            "each call has its own value: {twice}"
+        );
     }
 
     #[test]

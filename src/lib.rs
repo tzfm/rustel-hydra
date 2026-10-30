@@ -47,8 +47,8 @@ pub use host::{
 pub use names::hydra_names;
 pub use program::{
     HYDRA_DEFAULT_AUDIO_BINS, HYDRA_MAX_AUDIO_BINS, HYDRA_MAX_OUTPUT_EDGE, HYDRA_MAX_OUTPUT_PIXELS,
-    HYDRA_PROGRAM_VERSION, HYDRA_SOURCE_SLOTS, HydraCall, HydraNode, HydraOptions, HydraProgram,
-    HydraProgramError, HydraSource, HydraStatement, MAX_HYDRA_ARGS, MAX_HYDRA_CALLS,
+    HYDRA_PROGRAM_VERSION, HYDRA_SOURCE_SLOTS, HydraCall, HydraClock, HydraNode, HydraOptions,
+    HydraProgram, HydraProgramError, HydraSource, HydraStatement, MAX_HYDRA_ARGS, MAX_HYDRA_CALLS,
     MAX_HYDRA_DEPTH, MAX_HYDRA_NAME_BYTES, MAX_HYDRA_NODES, MAX_HYDRA_SIGNALS,
     MAX_HYDRA_SOURCE_BYTES, MAX_HYDRA_STATEMENTS, MAX_HYDRA_TEXT_BYTES,
 };
@@ -240,6 +240,12 @@ mod tests {
                         url: "https://i.imgur.com/zFttbWq.jpg".into(),
                     },
                 },
+                HydraStatement::ConfigureSource {
+                    slot: 2,
+                    source: HydraSource::Video {
+                        url: "clips/loop.webm".into(),
+                    },
+                },
                 HydraStatement::ClearSource { slot: 1 },
             ],
             0,
@@ -289,19 +295,61 @@ mod tests {
         }
     }
 
+    fn assign(name: &str, v: f64) -> HydraStatement {
+        HydraStatement::Assign {
+            name: name.into(),
+            value: HydraNode::Number { v },
+        }
+    }
+
     #[test]
-    fn unimplemented_timing_assignments_are_refused_at_the_wire() {
+    fn clock_settings_cross_the_wire_and_the_last_one_wins() {
         let program = sketch(
-            vec![HydraStatement::Assign {
-                name: "speed".into(),
-                value: HydraNode::Number { v: 2.0 },
-            }],
+            vec![
+                assign("speed", 2.0),
+                assign("bpm", 120.0),
+                assign("fps", 12.0),
+                assign("time", 0.0),
+                assign("speed", 0.5),
+            ],
             0,
         );
+        program.validate().expect("clock settings are valid");
         assert_eq!(
-            program.validate(),
-            Err(HydraProgramError::UnsupportedSetting("speed".into()))
+            program.clock(),
+            HydraClock {
+                speed: 0.5,
+                bpm: 120.0,
+                fps: Some(12.0),
+                time: Some(0.0),
+            }
         );
+        assert_eq!(HydraProgram::default().clock(), HydraClock::default());
+    }
+
+    #[test]
+    fn other_settings_and_values_out_of_range_are_refused_at_the_wire() {
+        assert_eq!(
+            sketch(vec![assign("update", 1.0)], 0).validate(),
+            Err(HydraProgramError::UnsupportedSetting("update".into()))
+        );
+        for statement in [
+            assign("bpm", 0.0),
+            assign("bpm", 1e308),
+            assign("fps", 0.5),
+            assign("fps", 241.0),
+            assign("speed", 1e6),
+            assign("time", 1e12),
+            HydraStatement::Assign {
+                name: "speed".into(),
+                value: HydraNode::Text { v: "2".into() },
+            },
+        ] {
+            assert!(matches!(
+                sketch(vec![statement], 0).validate(),
+                Err(HydraProgramError::InvalidOption(_))
+            ));
+        }
     }
 
     #[test]
@@ -399,26 +447,30 @@ mod tests {
             })
         ));
 
-        let image = |url: String| {
-            sketch(
-                vec![HydraStatement::ConfigureSource {
-                    slot: 0,
-                    source: HydraSource::ImageUrl { url },
-                }],
-                0,
-            )
-        };
-        assert_eq!(
-            image(String::new()).validate(),
-            Err(HydraProgramError::Empty("source URL"))
-        );
-        assert!(matches!(
-            image("x".repeat(MAX_HYDRA_TEXT_BYTES + 1)).validate(),
-            Err(HydraProgramError::TooLong {
-                what: "source URL",
-                ..
-            })
-        ));
+        let image = |url: String| HydraSource::ImageUrl { url };
+        let video = |url: String| HydraSource::Video { url };
+        for source in [image, video] {
+            let program = |url: String| {
+                sketch(
+                    vec![HydraStatement::ConfigureSource {
+                        slot: 0,
+                        source: source(url),
+                    }],
+                    0,
+                )
+            };
+            assert_eq!(
+                program(String::new()).validate(),
+                Err(HydraProgramError::Empty("source URL"))
+            );
+            assert!(matches!(
+                program("x".repeat(MAX_HYDRA_TEXT_BYTES + 1)).validate(),
+                Err(HydraProgramError::TooLong {
+                    what: "source URL",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]
