@@ -336,6 +336,7 @@ mod tests {
         for statement in [
             assign("bpm", 0.0),
             assign("bpm", 1e308),
+            assign("bpm", 0.001),
             assign("fps", 0.5),
             assign("fps", 241.0),
             assign("speed", 1e6),
