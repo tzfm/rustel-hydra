@@ -670,10 +670,7 @@ fn check_setting(name: &str, value: &HydraNode) -> Result<(), HydraProgramError>
     let (range, why) = match name {
         "speed" => (-1_000.0..=1_000.0, "speed must be from -1000 to 1000"),
         "time" => (-1.0e9..=1.0e9, "time must be from -1e9 to 1e9 seconds"),
-        "bpm" => (
-            f64::MIN_POSITIVE..=10_000.0,
-            "bpm must be above 0 and at most 10000",
-        ),
+        "bpm" => (0.01..=10_000.0, "bpm must be from 0.01 to 10000"),
         "fps" => (1.0..=240.0, "fps must be from 1 to 240"),
         _ => return Err(HydraProgramError::UnsupportedSetting(name.to_owned())),
     };
