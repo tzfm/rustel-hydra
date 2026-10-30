@@ -8,7 +8,8 @@
 //! `Math` functions, `time`, `width`, `height`, and `a.fft[n]`. Unsupported
 //! expressions are rejected rather than silently changing the sketch's
 //! behavior. `Math.random()` is a new value each frame, the same on every
-//! pixel, as a callback Hydra runs once a frame gives.
+//! pixel, as a callback Hydra runs once a frame gives. It hashes `time`, so it
+//! holds while the clock stands still.
 
 /// The first `vec4` in the fixed-capacity audio uniform backing `a.fft`.
 pub const AUDIO_UNIFORM: &str = "_audio";
@@ -24,6 +25,12 @@ impl std::fmt::Display for ExprError {
 
 /// Compile `() => …`'s body, or a bare expression, to GLSL.
 pub fn compile(source: &str) -> Result<String, ExprError> {
+    compile_seeded(source, &mut 0)
+}
+
+/// The same, numbering each `Math.random()` from `randoms`, so every call in
+/// one shader has a value of its own.
+pub fn compile_seeded(source: &str, randoms: &mut u32) -> Result<String, ExprError> {
     if source.len() > crate::program::MAX_HYDRA_SOURCE_BYTES {
         return Err(ExprError(format!(
             "a Hydra callback exceeds the {} byte limit",
@@ -38,7 +45,7 @@ pub fn compile(source: &str) -> Result<String, ExprError> {
     let mut reader = Expr {
         bytes: body.trim().as_bytes(),
         at: 0,
-        randoms: 0,
+        randoms,
     };
     let glsl = reader.expression(0)?;
     reader.space();
@@ -54,8 +61,9 @@ pub fn compile(source: &str) -> Result<String, ExprError> {
 struct Expr<'a> {
     bytes: &'a [u8],
     at: usize,
-    /// `Math.random()` calls so far, so each has a value of its own.
-    randoms: usize,
+    /// `Math.random()` calls so far in the shader, so each has a value of
+    /// its own.
+    randoms: &'a mut u32,
 }
 
 impl Expr<'_> {
@@ -214,11 +222,11 @@ impl Expr<'_> {
                     return Err(ExprError("`Math.random` takes no arguments".into()));
                 }
                 // A hash of the frame's time: one value for every pixel, a
-                // new one each frame. Each call in a callback has its own.
-                self.randoms += 1;
+                // new one each frame. Each call in the shader has its own.
+                *self.randoms += 1;
                 return Ok(format!(
                     "fract(sin(time * 78.233 + {}.0 * 12.9898) * 43758.5453)",
-                    self.randoms
+                    *self.randoms
                 ));
             }
             other => return Err(ExprError(format!("`Math.{other}` is not compiled"))),

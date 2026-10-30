@@ -229,7 +229,8 @@ pub fn compose_full(node: &HydraNode, precision: &str) -> Result<Composed, Compo
     let steps = flatten(node)?;
     let mut used: Vec<&'static Function> = Vec::new();
     let mut signals: Vec<(String, u32)> = Vec::new();
-    let body = generate(&steps, "c", "st", &mut used, &mut signals)?;
+    let mut randoms = 0;
+    let body = generate(&steps, "c", "st", &mut used, &mut signals, &mut randoms)?;
 
     let mut shader = String::new();
     // The leading newline and two-space indents are hydra's own template.
@@ -310,6 +311,7 @@ fn generate(
     uv: &str,
     used: &mut Vec<&'static Function>,
     signals: &mut Vec<(String, u32)>,
+    randoms: &mut u32,
 ) -> Result<String, ComposeError> {
     let mut text = String::new();
     for (index, step) in steps.iter().enumerate() {
@@ -317,7 +319,7 @@ fn generate(
             used.push(step.entry);
         }
         let scoped = format!("{colour}{index}");
-        let inputs = arguments(step, &scoped, uv, used, signals)?;
+        let inputs = arguments(step, &scoped, uv, used, signals, randoms)?;
         let call = format!(
             "{}({}{})",
             step.entry.name,
@@ -385,6 +387,7 @@ fn arguments(
     uv: &str,
     used: &mut Vec<&'static Function>,
     signals: &mut Vec<(String, u32)>,
+    randoms: &mut u32,
 ) -> Result<Arguments, ComposeError> {
     let mut prelude = String::new();
     let mut text = String::new();
@@ -456,7 +459,8 @@ fn arguments(
                     let nested = flatten(&source)?;
                     let inner_colour = format!("{scoped}_i{index}");
                     let inner_uv = format!("{uv}_{scoped}_i{index}");
-                    let inner = generate(&nested, &inner_colour, &inner_uv, used, signals)?;
+                    let inner =
+                        generate(&nested, &inner_colour, &inner_uv, used, signals, randoms)?;
                     prelude = format!("vec2 {inner_uv} = {uv};{prelude}\n         {inner}");
                     inner_colour
                 } else {
@@ -474,7 +478,7 @@ fn arguments(
                 let nested = flatten(node)?;
                 let inner_colour = format!("{scoped}_i{index}");
                 let inner_uv = format!("{uv}_{scoped}_i{index}");
-                let inner = generate(&nested, &inner_colour, &inner_uv, used, signals)?;
+                let inner = generate(&nested, &inner_colour, &inner_uv, used, signals, randoms)?;
                 prelude = format!("vec2 {inner_uv} = {uv};{prelude}\n         {inner}");
                 inner_colour
             }
@@ -513,7 +517,7 @@ fn arguments(
             // into the shader instead, where `time` and the audio bands
             // already live. The value stops being sampled and becomes exact.
             Some(HydraNode::Source { src }) if kind == "float" => {
-                match crate::glsl::expr::compile(src) {
+                match crate::glsl::expr::compile_seeded(src, randoms) {
                     Ok(glsl) => glsl,
                     Err(error) => {
                         return Err(ComposeError::Argument(format!(
@@ -799,6 +803,27 @@ fn decimal(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two callbacks in one shader each read a random value of their own,
+    /// as two callbacks Hydra runs each frame do.
+    #[test]
+    fn each_random_call_in_a_shader_has_its_own_value() {
+        let random = || HydraNode::Source {
+            src: "() => Math.random()".into(),
+        };
+        let node = HydraNode::Chain {
+            head: "osc".into(),
+            args: vec![random(), random()],
+            calls: vec![HydraCall {
+                method: "rotate".into(),
+                args: vec![random()],
+            }],
+        };
+        let shader = compose(&node, "highp").expect("composes");
+        for seed in ["+ 1.0 * 12.9898", "+ 2.0 * 12.9898", "+ 3.0 * 12.9898"] {
+            assert!(shader.contains(seed), "{seed} in {shader}");
+        }
+    }
 
     mod animated_lists {
         //! Arrays as animated arguments: `[…]` where a float goes.
