@@ -1129,9 +1129,6 @@ const PREVIEW_EDGE: u32 = 320;
 const FRAME_INTERVAL: Duration =
     Duration::from_nanos(1_000_000_000 / crate::HYDRA_FRAMES_PER_SECOND as u64);
 
-/// The pace this frame runs at: the score program's own fps when one is
-/// installed, and the default interval when none is, so a preview or a
-/// theme alone keeps the usual cadence.
 /// Step every array argument at `bpm` instead of Hydra's default 30. An
 /// array's index runs at `time * speed * bpm / 60`, and the composer writes
 /// it for 30 bpm, so a list's own speed carries the ratio.
@@ -1162,6 +1159,18 @@ fn step_arrays_at(program: &mut HydraProgram, bpm: f64) {
     }
 }
 
+/// When a sketch with `fps` draws after a draw at `now`: one period after the
+/// last planned draw, so the rate holds on average. A draw more than a
+/// period late, after a pause, plans from `now` instead of catching up.
+fn next_fps_draw(planned: Option<Instant>, now: Instant, fps: f64) -> Instant {
+    let period = Duration::from_secs_f64(1.0 / fps);
+    let next = planned.unwrap_or(now) + period;
+    if next < now { now + period } else { next }
+}
+
+/// The pace this frame runs at: the score program's own fps when one is
+/// installed, and the default interval when none is, so a preview or a
+/// theme alone keeps the usual cadence.
 fn frame_interval(score_fps: Option<u32>) -> Duration {
     match score_fps {
         Some(fps) if fps > 0 => Duration::from_nanos(1_000_000_000 / u64::from(fps)),
@@ -1243,7 +1252,9 @@ fn worker(
     let mut clock = crate::HydraClock::default();
     let mut score_time = 0.0f64;
     let mut ticked = Instant::now();
-    let mut score_drawn: Option<Instant> = None;
+    // When `fps` draws the score next. Each draw moves it one period on, so
+    // the worker's own ticks round single frames but not the rate.
+    let mut next_draw: Option<Instant> = None;
     let mut preview: Option<(HydraNode, u64)> = None;
     // Keep the command's epoch attached to its parsed node. Reading the
     // shared current epoch beside an older local node would let that old
@@ -1286,7 +1297,7 @@ fn worker(
                     if let Some(program) = score.as_mut() {
                         step_arrays_at(program, clock.bpm);
                     }
-                    score_drawn = None;
+                    next_draw = None;
                     score_changed = true;
                     once.rearm();
                 }
@@ -1344,10 +1355,7 @@ fn worker(
         score_time += now.saturating_duration_since(ticked).as_secs_f64() * clock.speed;
         ticked = now;
         // `fps` draws less often than the host asks. The last frame stays.
-        let due = clock.fps.is_none_or(|fps| {
-            score_drawn
-                .is_none_or(|drawn| now.saturating_duration_since(drawn).as_secs_f64() >= 1.0 / fps)
-        });
+        let due = next_draw.is_none_or(|next| now >= next);
         let drawing = shared.open.load(Ordering::Relaxed) && shared.drawing.load(Ordering::Relaxed);
         if drawing && score.is_some() {
             renderer_used = Instant::now();
@@ -1356,7 +1364,9 @@ fn worker(
             && due
             && let Some(program) = &score
         {
-            score_drawn = Some(now);
+            if let Some(fps) = clock.fps {
+                next_draw = Some(next_fps_draw(next_draw, now, fps));
+            }
             draw(
                 &mut renderer,
                 program,
@@ -2047,6 +2057,24 @@ mod frame_acknowledgement {
 mod tests {
     use super::*;
     use crate::{HydraCall, HydraOptions, HydraSource};
+
+    /// `fps = 12` on the worker's 30 ticks a second draws 12 frames a
+    /// second, not the 10 that comparing with the last draw gives.
+    #[test]
+    fn fps_holds_its_rate_on_the_worker_ticks() {
+        let start = Instant::now();
+        let tick = Duration::from_nanos(1_000_000_000 / 30);
+        let mut planned = None;
+        let mut draws = 0;
+        for index in 0..300 {
+            let now = start + tick * index;
+            if planned.is_none_or(|next| now >= next) {
+                draws += 1;
+                planned = Some(next_fps_draw(planned, now, 12.0));
+            }
+        }
+        assert!((119..=121).contains(&draws), "{draws} draws in ten seconds");
+    }
 
     #[test]
     fn bpm_steps_every_array_argument_at_its_rate() {
