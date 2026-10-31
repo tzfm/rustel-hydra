@@ -47,10 +47,11 @@ pub use host::{
 pub use names::hydra_names;
 pub use program::{
     HYDRA_DEFAULT_AUDIO_BINS, HYDRA_MAX_AUDIO_BINS, HYDRA_MAX_OUTPUT_EDGE, HYDRA_MAX_OUTPUT_PIXELS,
-    HYDRA_PROGRAM_VERSION, HYDRA_SOURCE_SLOTS, HydraCall, HydraClock, HydraNode, HydraOptions,
-    HydraProgram, HydraProgramError, HydraSource, HydraStatement, MAX_HYDRA_ARGS, MAX_HYDRA_CALLS,
-    MAX_HYDRA_DEPTH, MAX_HYDRA_NAME_BYTES, MAX_HYDRA_NODES, MAX_HYDRA_SIGNALS,
-    MAX_HYDRA_SOURCE_BYTES, MAX_HYDRA_STATEMENTS, MAX_HYDRA_TEXT_BYTES,
+    HYDRA_PROGRAM_VERSION, HYDRA_SOURCE_SLOTS, HydraAnalyser, HydraAnalyserSetting, HydraCall,
+    HydraClock, HydraNode, HydraOptions, HydraProgram, HydraProgramError, HydraSource,
+    HydraStatement, MAX_HYDRA_ARGS, MAX_HYDRA_CALLS, MAX_HYDRA_DEPTH, MAX_HYDRA_NAME_BYTES,
+    MAX_HYDRA_NODES, MAX_HYDRA_SIGNALS, MAX_HYDRA_SOURCE_BYTES, MAX_HYDRA_STATEMENTS,
+    MAX_HYDRA_TEXT_BYTES,
 };
 
 use serde::{Deserialize, Serialize};
@@ -292,6 +293,51 @@ mod tests {
             sketch(vec![HydraStatement::ConfigureAudio { bins }], 0)
                 .validate()
                 .unwrap_or_else(|error| panic!("{bins} bins: {error}"));
+        }
+    }
+
+    #[test]
+    fn analyser_settings_cross_the_wire_and_stay_in_range() {
+        use HydraAnalyserSetting::{Cutoff, Scale, Smooth};
+        let setting = |setting, value| HydraStatement::ConfigureAnalyser { setting, value };
+        let program = sketch(
+            vec![
+                setting(Smooth, 0.8),
+                setting(Cutoff, 4.0),
+                setting(Scale, 2.0),
+                setting(Smooth, 0.6),
+            ],
+            0,
+        );
+        program.validate().expect("the settings are in range");
+        let json = serde_json::to_string(&program).expect("serialize");
+        assert!(
+            json.contains(r#""s":"analyser","setting":"cutoff","value":4.0"#),
+            "{json}"
+        );
+        let back: HydraProgram = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(program, back);
+        assert_eq!(
+            program.analyser(),
+            HydraAnalyser {
+                smooth: 0.6,
+                cutoff: 4.0,
+                scale: 2.0,
+            },
+            "the last call to each wins"
+        );
+        assert_eq!(HydraProgram::default().analyser(), HydraAnalyser::default());
+
+        for (name, value, why) in [
+            (Smooth, 1.5, "a.setSmooth takes a number from 0 to 1"),
+            (Smooth, f64::NAN, "a.setSmooth takes a number from 0 to 1"),
+            (Cutoff, 1e9, "a.setCutoff takes a number from -1000 to 1000"),
+            (Scale, 0.0, "a.setScale takes a number from 0.001 to 1000"),
+        ] {
+            assert_eq!(
+                sketch(vec![setting(name, value)], 0).validate(),
+                Err(HydraProgramError::InvalidOption(why))
+            );
         }
     }
 

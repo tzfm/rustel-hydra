@@ -94,6 +94,7 @@ const API: &[&str] = &[
     "render",
     "setBins",
     "setCutoff",
+    "setFunction",
     "setMax",
     "setResolution",
     "setScale",

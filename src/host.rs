@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::native::{NativeFootprint, NativeRenderer};
-use crate::program::{HydraNode, HydraProgram, HydraStatement};
+use crate::program::{HydraAnalyser, HydraNode, HydraProgram, HydraStatement};
 use crate::{HydraAudioFrame, HydraSignalFrame, HydraTuiFrame};
 
 /// Something the renderer has to tell the engine.
@@ -296,6 +296,18 @@ impl HydraMemory {
     }
 }
 
+/// The share of its last value each audio band keeps, `a.setSmooth`, as
+/// `f32` bits.
+struct AudioSmooth(AtomicU32);
+
+impl Default for AudioSmooth {
+    fn default() -> Self {
+        Self(AtomicU32::new(
+            (HydraAnalyser::default().smooth as f32).to_bits(),
+        ))
+    }
+}
+
 #[derive(Default)]
 struct Shared {
     /// A sketch is installed and the renderer is up.
@@ -337,6 +349,11 @@ struct Shared {
     signals: Mutex<Option<SignalSchedule>>,
     /// What the engine is playing, for `detectAudio`.
     audio: Mutex<[f32; crate::HYDRA_AUDIO_BINS]>,
+    /// The score's `a.setSmooth`. The theme's picture reads the same bands,
+    /// and shows only while the score draws nothing.
+    audio_smooth: AudioSmooth,
+    /// `mouse`, two `f32`s from 0 to 1, packed `x << 32 | y`.
+    pointer: AtomicU64,
     /// Frames delivered, for the rate the log reports.
     delivered: AtomicU64,
     /// What the score's, the shelf's and the theme's renderers hold, in
@@ -345,6 +362,14 @@ struct Shared {
 }
 
 impl Shared {
+    fn pointer(&self) -> (f32, f32) {
+        let packed = self.pointer.load(Ordering::Relaxed);
+        (
+            f32::from_bits((packed >> 32) as u32),
+            f32::from_bits(packed as u32),
+        )
+    }
+
     fn memory(&self) -> HydraMemory {
         let [score, preview, theme] = &self.renderers;
         HydraMemory {
@@ -704,6 +729,7 @@ impl HydraHost {
             self.shared.open.store(false, Ordering::Relaxed);
             self.shared.wants_tui.store(false, Ordering::Relaxed);
             self.shared.wants_audio.store(false, Ordering::Relaxed);
+            self.set_audio_smooth(HydraAnalyser::default().smooth);
             if let Some(running) = &self.running {
                 let _ = running.commands.send(Command::Apply(Box::new(None)));
             }
@@ -721,6 +747,7 @@ impl HydraHost {
         self.shared
             .wants_audio
             .store(program.options.detect_audio, Ordering::Relaxed);
+        self.set_audio_smooth(program.analyser().smooth);
         self.start()?;
         self.shared.open.store(true, Ordering::Relaxed);
         if let Some(running) = &self.running {
@@ -740,16 +767,36 @@ impl HydraHost {
 
     /// Publish what the engine is playing, for `detectAudio`.
     pub fn audio(&self, frame: &HydraAudioFrame) {
+        let keep = f32::from_bits(self.shared.audio_smooth.0.load(Ordering::Relaxed));
         if let Ok(mut slot) = self.shared.audio.lock() {
-            // The browser analyser smooths between frames
-            // (smoothingTimeConstant), and sketches are written against
-            // that easing; raw per-frame bins flicker.
+            // hydra-synth eases each bin between frames, and sketches are
+            // written against that easing; raw per-frame bins flicker. It
+            // weights the previous frame by `smooth`, not its complement.
             for (held, next) in slot.iter_mut().zip(frame.bins) {
-                // hydra-synth defaults `smooth` to 0.4 and weights the
-                // previous frame by that value, not its complement.
-                *held = *held * 0.4 + next * 0.6;
+                *held = *held * keep + next * (1.0 - keep);
             }
         }
+    }
+
+    fn set_audio_smooth(&self, smooth: f64) {
+        self.shared
+            .audio_smooth
+            .0
+            .store((smooth as f32).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Where the pointer is, from 0 to 1 across the picture from its
+    /// top-left corner. Every picture reads it as `mouse`, in its own pixels.
+    pub fn set_pointer(&self, x: f32, y: f32) {
+        let axis = |value: f32| {
+            if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        let packed = (u64::from(axis(x).to_bits()) << 32) | u64::from(axis(y).to_bits());
+        self.shared.pointer.store(packed, Ordering::Relaxed);
     }
 
     pub fn frames(&self) -> HydraFrames {
@@ -1538,6 +1585,8 @@ fn draw(
     if let Ok(bands) = shared.audio.lock() {
         open.set_audio(score_audio(program, *bands));
     }
+    let (x, y) = shared.pointer();
+    open.set_pointer(x, y);
 
     let external = configured_source_slots(program);
     sync_input_sources(open, shared, &external, source_uploads, once);
@@ -1644,12 +1693,14 @@ fn deliver(
     }
 }
 
+/// `a.fft` as the score reads it, through its own cutoff and scale.
 fn score_audio(
     program: &HydraProgram,
     bands: [f32; crate::HYDRA_AUDIO_BINS],
 ) -> [f32; crate::HYDRA_AUDIO_BINS] {
     if program.options.detect_audio {
-        bands
+        let analyser = program.analyser();
+        bands.map(|band| analyser.read(band))
     } else {
         [0.0; crate::HYDRA_AUDIO_BINS]
     }
@@ -1942,6 +1993,8 @@ fn draw_one(
     if let Ok(bins) = shared.audio.lock() {
         open.set_audio(*bins);
     }
+    let (x, y) = shared.pointer();
+    open.set_pointer(x, y);
     if let Err(error) = open.draw(node, time) {
         once.failed(error.to_string());
         return;
@@ -2508,6 +2561,39 @@ mod tests {
     }
 
     #[test]
+    fn the_scores_analyser_settings_ease_and_read_the_bands() {
+        use crate::program::HydraAnalyserSetting::{Cutoff, Scale};
+        let mut host = HydraHost::new();
+        host.set_audio_smooth(0.9);
+        let mut frame = HydraAudioFrame::default();
+        frame.bins.fill(1.0);
+        host.audio(&frame);
+        assert!((host.shared.audio.lock().unwrap()[0] - 0.1).abs() < 1e-6);
+        host.apply(HydraProgram::default())
+            .expect("an empty sketch stops drawing");
+        host.audio(&frame);
+        assert!(
+            (host.shared.audio.lock().unwrap()[0] - 0.64).abs() < 1e-6,
+            "a stopped sketch gives the default smooth back"
+        );
+
+        let setting = |setting, value| HydraStatement::ConfigureAnalyser { setting, value };
+        let program = HydraProgram {
+            statements: vec![setting(Cutoff, 4.0), setting(Scale, 2.0)],
+            ..HydraProgram::default()
+        };
+        let read = |band| score_audio(&program, [band; crate::HYDRA_AUDIO_BINS])[0];
+        assert_eq!(read(0.5), 1.5, "0.5 stands for the bin 7, so (7 - 4) / 2");
+        assert_eq!(read(0.1), 0.0, "the bin 3 is under the cutoff");
+        let low = HydraProgram {
+            statements: vec![setting(Cutoff, 0.0)],
+            ..HydraProgram::default()
+        };
+        assert_eq!(score_audio(&low, [0.0; crate::HYDRA_AUDIO_BINS])[0], 0.0);
+        assert!((score_audio(&low, [0.1; crate::HYDRA_AUDIO_BINS])[0] - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
     fn render_accepts_the_recorders_pristine_chain_output_reference() {
         let program = HydraProgram {
             statements: vec![HydraStatement::Evaluate {
@@ -2824,5 +2910,15 @@ mod tests {
         );
         assert_eq!(super::frame_interval(Some(60)), super::FRAME_INTERVAL / 2);
         assert_eq!(super::frame_interval(Some(15)), super::FRAME_INTERVAL * 2);
+    }
+
+    #[test]
+    fn the_pointer_stays_on_the_picture() {
+        let host = super::HydraHost::new();
+        assert_eq!(host.shared.pointer(), (0.0, 0.0), "it starts in the corner");
+        host.set_pointer(0.25, 0.75);
+        assert_eq!(host.shared.pointer(), (0.25, 0.75));
+        host.set_pointer(2.0, f32::NAN);
+        assert_eq!(host.shared.pointer(), (1.0, 0.0));
     }
 }
