@@ -345,4 +345,20 @@ mod tests {
         let shader = uplift_with_signal_slots(&composed.shader, &composed.signals);
         naga_accepts(&shader).unwrap_or_else(|error| panic!("{sketch}: {error}"));
     }
+
+    #[test]
+    fn callback_operators_and_their_helpers_compile() {
+        let sketch = "osc(() => time % 2 < 1 && mouse.x >= 0 || !time ? Math.atan2(1, 2) : Math.hypot(1, 2, 3), \
+                      () => Math.trunc(-time) % -3, () => Math.min(1, 2, time) === 1 ? Math.E : Math.log10(2)).out()";
+        let node = crate::glsl::parse_chain(sketch).expect("the sketch parses");
+        let composed = crate::glsl::compose_full(&node, "highp").expect("the composer admits it");
+        for (call, _) in crate::glsl::expr::HELPERS {
+            assert!(
+                composed.shader.matches(&call[..call.len() - 1]).count() >= 2,
+                "{call} is defined and called"
+            );
+        }
+        let shader = uplift_with_signal_slots(&composed.shader, &composed.signals);
+        naga_accepts(&shader).unwrap_or_else(|error| panic!("{sketch}: {error}"));
+    }
 }

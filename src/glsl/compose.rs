@@ -244,6 +244,11 @@ pub fn compose_full(node: &HydraNode, precision: &str) -> Result<Composed, Compo
     for helper in UTILITY {
         let _ = write!(shader, "\n            {helper}\n          ");
     }
+    for (call, helper) in crate::glsl::expr::HELPERS {
+        if body.contains(call) {
+            let _ = write!(shader, "\n            {helper}\n          ");
+        }
+    }
     shader.push_str("\n\n  ");
     for entry in &used {
         let _ = write!(shader, "\n            {}\n          ", definition(entry));
@@ -522,7 +527,8 @@ fn arguments(
                     Err(error) => {
                         return Err(ComposeError::Argument(format!(
                             "`{}` was given a function this cannot compile: {error}. \
-                         Arithmetic on `time`, `mouse` and `a.fft[0..15]` works; for a \
+                         Arithmetic, comparisons and `? :` on `time`, `mouse` and \
+                         `a.fft[0..15]` work; for a \
                          value from the music, `H(pattern)` reads the transport",
                             step.entry.name
                         )));

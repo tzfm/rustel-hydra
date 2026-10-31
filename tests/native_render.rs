@@ -720,3 +720,33 @@ fn the_pointer_reaches_the_shader_in_pixels() {
         &lit[0..4]
     );
 }
+
+/// JavaScript's `%` keeps the sign of its left side, where GLSL's `mod` keeps
+/// the right, and a comparison counts as 1 or 0.
+#[test]
+fn callback_operators_count_as_javascript_does() {
+    let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
+        eprintln!("skipped: nothing to render on");
+        return;
+    };
+    let callback = |src: &str| HydraNode::Source { src: src.into() };
+    let sketch = HydraNode::Chain {
+        head: "solid".into(),
+        args: vec![
+            callback("() => -1 % 3 + 1.5"),
+            callback("() => 2 > 1 ? 0.5 : 0"),
+            callback("() => 7 % 4 / 4"),
+            n(1.0),
+        ],
+        calls: Vec::new(),
+    };
+    let pixels = renderer
+        .render(&sketch, 0.0)
+        .expect("the operators compile");
+    let near = |value: u8, expected: u8| value.abs_diff(expected) <= 2;
+    assert!(
+        near(pixels[0], 128) && near(pixels[1], 128) && near(pixels[2], 191),
+        "-1 % 3 is -1, 2 > 1 is true and 7 % 4 is 3: {:?}",
+        &pixels[0..4]
+    );
+}
