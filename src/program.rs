@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Current schema version of a recorded sketch.
-pub const HYDRA_PROGRAM_VERSION: u16 = 4;
+pub const HYDRA_PROGRAM_VERSION: u16 = 5;
 
 /// Drawing statements one sketch may carry.
 pub const MAX_HYDRA_STATEMENTS: usize = 64;
@@ -320,6 +320,25 @@ pub enum HydraStatement {
     /// spectrum become `a.fft[0]` through `a.fft[n - 1]`.
     #[serde(rename = "audio")]
     ConfigureAudio { bins: u8 },
+    /// `a.setSmooth(n)`, `a.setCutoff(n)` or `a.setScale(n)`: how the
+    /// analyser eases and reads its bins. See [`HydraAnalyser`].
+    #[serde(rename = "analyser")]
+    ConfigureAnalyser {
+        setting: HydraAnalyserSetting,
+        value: f64,
+    },
+}
+
+/// The analyser settings a sketch can change.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HydraAnalyserSetting {
+    /// `a.setSmooth(n)`: the share of its last value each bin keeps.
+    Smooth,
+    /// `a.setCutoff(n)`: the level a bin must pass to count.
+    Cutoff,
+    /// `a.setScale(n)`: the level past the cutoff that reads as 1.
+    Scale,
 }
 
 /// The external inputs native Hydra can acquire without a browser DOM.
@@ -359,6 +378,41 @@ impl Default for HydraClock {
             fps: None,
             time: None,
         }
+    }
+}
+
+/// How the analyser turns the engine's sound into `a.fft`, as the calls of
+/// one sketch leave it. hydra-synth eases each bin toward its new level,
+/// keeping `smooth` of the last one, then reads `max(0, (bin - cutoff) /
+/// scale)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HydraAnalyser {
+    pub smooth: f64,
+    pub cutoff: f64,
+    pub scale: f64,
+}
+
+impl Default for HydraAnalyser {
+    fn default() -> Self {
+        Self {
+            smooth: 0.4,
+            cutoff: 2.0,
+            scale: 10.0,
+        }
+    }
+}
+
+impl HydraAnalyser {
+    /// `a.fft` for a band the engine measured. A band already reads as
+    /// `a.fft` at hydra's default settings, so it stands for the bin `band *
+    /// 10 + 2`. Silence stays 0 whatever the cutoff.
+    pub fn read(&self, band: f32) -> f32 {
+        if band <= 0.0 {
+            return 0.0;
+        }
+        let defaults = Self::default();
+        let bin = f64::from(band) * defaults.scale + defaults.cutoff;
+        ((bin - self.cutoff) / self.scale).max(0.0) as f32
     }
 }
 
@@ -428,6 +482,22 @@ impl HydraProgram {
             }
         }
         clock
+    }
+
+    /// The analyser settings this sketch leaves: its last call to each.
+    pub fn analyser(&self) -> HydraAnalyser {
+        let mut analyser = HydraAnalyser::default();
+        for statement in &self.statements {
+            let HydraStatement::ConfigureAnalyser { setting, value } = statement else {
+                continue;
+            };
+            match setting {
+                HydraAnalyserSetting::Smooth => analyser.smooth = *value,
+                HydraAnalyserSetting::Cutoff => analyser.cutoff = *value,
+                HydraAnalyserSetting::Scale => analyser.scale = *value,
+            }
+        }
+        analyser
     }
 
     /// True when the score asked for nothing - the signal to stop drawing.
@@ -552,6 +622,9 @@ impl HydraProgram {
                         });
                     }
                 }
+                HydraStatement::ConfigureAnalyser { setting, value } => {
+                    check_analyser(*setting, *value)?;
+                }
             }
         }
         Ok(())
@@ -655,6 +728,27 @@ impl HydraProgram {
                 Ok(())
             }
         }
+    }
+}
+
+/// An analyser setting holds a number in its range. A smooth past 1 would
+/// grow without end, and these ranges keep every `a.fft` value finite.
+fn check_analyser(setting: HydraAnalyserSetting, value: f64) -> Result<(), HydraProgramError> {
+    let (range, why) = match setting {
+        HydraAnalyserSetting::Smooth => (0.0..=1.0, "a.setSmooth takes a number from 0 to 1"),
+        HydraAnalyserSetting::Cutoff => (
+            -1_000.0..=1_000.0,
+            "a.setCutoff takes a number from -1000 to 1000",
+        ),
+        HydraAnalyserSetting::Scale => (
+            0.001..=1_000.0,
+            "a.setScale takes a number from 0.001 to 1000",
+        ),
+    };
+    if range.contains(&value) {
+        Ok(())
+    } else {
+        Err(HydraProgramError::InvalidOption(why))
     }
 }
 
