@@ -337,6 +337,8 @@ struct Shared {
     signals: Mutex<Option<SignalSchedule>>,
     /// What the engine is playing, for `detectAudio`.
     audio: Mutex<[f32; crate::HYDRA_AUDIO_BINS]>,
+    /// `mouse`, two `f32`s from 0 to 1, packed `x << 32 | y`.
+    pointer: AtomicU64,
     /// Frames delivered, for the rate the log reports.
     delivered: AtomicU64,
     /// What the score's, the shelf's and the theme's renderers hold, in
@@ -345,6 +347,14 @@ struct Shared {
 }
 
 impl Shared {
+    fn pointer(&self) -> (f32, f32) {
+        let packed = self.pointer.load(Ordering::Relaxed);
+        (
+            f32::from_bits((packed >> 32) as u32),
+            f32::from_bits(packed as u32),
+        )
+    }
+
     fn memory(&self) -> HydraMemory {
         let [score, preview, theme] = &self.renderers;
         HydraMemory {
@@ -750,6 +760,20 @@ impl HydraHost {
                 *held = *held * 0.4 + next * 0.6;
             }
         }
+    }
+
+    /// Where the pointer is, from 0 to 1 across the picture from its
+    /// top-left corner. Every picture reads it as `mouse`, in its own pixels.
+    pub fn set_pointer(&self, x: f32, y: f32) {
+        let axis = |value: f32| {
+            if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        let packed = (u64::from(axis(x).to_bits()) << 32) | u64::from(axis(y).to_bits());
+        self.shared.pointer.store(packed, Ordering::Relaxed);
     }
 
     pub fn frames(&self) -> HydraFrames {
@@ -1538,6 +1562,8 @@ fn draw(
     if let Ok(bands) = shared.audio.lock() {
         open.set_audio(score_audio(program, *bands));
     }
+    let (x, y) = shared.pointer();
+    open.set_pointer(x, y);
 
     let external = configured_source_slots(program);
     sync_input_sources(open, shared, &external, source_uploads, once);
@@ -1942,6 +1968,8 @@ fn draw_one(
     if let Ok(bins) = shared.audio.lock() {
         open.set_audio(*bins);
     }
+    let (x, y) = shared.pointer();
+    open.set_pointer(x, y);
     if let Err(error) = open.draw(node, time) {
         once.failed(error.to_string());
         return;
@@ -2824,5 +2852,15 @@ mod tests {
         );
         assert_eq!(super::frame_interval(Some(60)), super::FRAME_INTERVAL / 2);
         assert_eq!(super::frame_interval(Some(15)), super::FRAME_INTERVAL * 2);
+    }
+
+    #[test]
+    fn the_pointer_stays_on_the_picture() {
+        let host = super::HydraHost::new();
+        assert_eq!(host.shared.pointer(), (0.0, 0.0), "it starts in the corner");
+        host.set_pointer(0.25, 0.75);
+        assert_eq!(host.shared.pointer(), (0.25, 0.75));
+        host.set_pointer(2.0, f32::NAN);
+        assert_eq!(host.shared.pointer(), (1.0, 0.0));
     }
 }

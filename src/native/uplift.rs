@@ -153,6 +153,7 @@ pub fn uplift(frag: &str) -> String {
          \x20   vec4 audio1;\n\
          \x20   vec4 audio2;\n\
          \x20   vec4 audio3;\n\
+         \x20   vec2 mouse;\n\
          }} _globals;\n\
          #define time _globals.time\n\
          #define resolution _globals.resolution\n\
@@ -160,6 +161,7 @@ pub fn uplift(frag: &str) -> String {
          #define _audio1 _globals.audio1\n\
          #define _audio2 _globals.audio2\n\
          #define _audio3 _globals.audio3\n\
+         #define _mouse _globals.mouse\n\
          {samplers}\
          layout(location=0) in vec2 uv;\n\
          layout(location=0) out vec4 _frag_out;\n\
@@ -333,5 +335,14 @@ mod tests {
                 "{sketch} past the bound: {error}"
             );
         }
+    }
+
+    #[test]
+    fn a_callback_that_reads_the_pointer_compiles() {
+        let sketch = "osc(() => mouse.x / width, 0.1, () => mouse.y * 0.01).out()";
+        let node = crate::glsl::parse_chain(sketch).expect("the sketch parses");
+        let composed = crate::glsl::compose_full(&node, "highp").expect("the composer admits it");
+        let shader = uplift_with_signal_slots(&composed.shader, &composed.signals);
+        naga_accepts(&shader).unwrap_or_else(|error| panic!("{sketch}: {error}"));
     }
 }

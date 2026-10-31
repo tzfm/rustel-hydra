@@ -587,7 +587,9 @@ fn the_footprint_counts_the_textures_and_buffers_and_follows_them() {
         eprintln!("skipped: nothing to render on");
         return;
     };
-    let uniforms = 16 + rustel_hydra::HYDRA_AUDIO_BINS * 4 + rustel_hydra::native::MAX_SIGNALS * 4;
+    // The globals end with the pointer, padded to sixteen bytes.
+    let uniforms =
+        16 + rustel_hydra::HYDRA_AUDIO_BINS * 4 + 16 + rustel_hydra::native::MAX_SIGNALS * 4;
     let sources = |texels: usize| texels * 4;
 
     let open = renderer.footprint();
@@ -679,5 +681,42 @@ fn the_footprint_counts_as_resident_only_the_textures_written() {
         resized.textures - resized.resident,
         10 * 32 * 32 * 4,
         "new textures, none written"
+    );
+}
+
+/// `mouse` reads the pointer in pixels: half way across a 16 pixel picture
+/// is 8, so `mouse.x / width` is a half and `mouse.y / 16` is a quarter.
+#[test]
+fn the_pointer_reaches_the_shader_in_pixels() {
+    let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
+        eprintln!("skipped: nothing to render on");
+        return;
+    };
+    let sketch = HydraNode::Chain {
+        head: "solid".into(),
+        args: vec![
+            HydraNode::Source {
+                src: "() => mouse.x / width".into(),
+            },
+            HydraNode::Source {
+                src: "() => mouse.y / 16".into(),
+            },
+            n(0.0),
+            n(1.0),
+        ],
+        calls: Vec::new(),
+    };
+    let dark = renderer.render(&sketch, 0.0).expect("the pointer compiles");
+    assert_eq!(&dark[0..3], &[0, 0, 0], "the pointer starts in the corner");
+
+    renderer.set_pointer(0.5, 0.25);
+    let lit = renderer
+        .render(&sketch, 0.0)
+        .expect("the pointer reaches the GPU");
+    let near = |value: u8, expected: u8| value.abs_diff(expected) <= 2;
+    assert!(
+        near(lit[0], 128) && near(lit[1], 64),
+        "half and a quarter of the picture: {:?}",
+        &lit[0..4]
     );
 }

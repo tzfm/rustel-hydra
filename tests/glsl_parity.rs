@@ -571,7 +571,7 @@ fn a_callback_is_compiled_into_the_shader() {
     let refused = chain(
         "osc",
         vec![HydraNode::Source {
-            src: "() => mouse.x".into(),
+            src: "() => window.innerWidth".into(),
         }],
         vec![],
     );

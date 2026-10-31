@@ -522,7 +522,7 @@ fn arguments(
                     Err(error) => {
                         return Err(ComposeError::Argument(format!(
                             "`{}` was given a function this cannot compile: {error}. \
-                         Arithmetic on `time` and `a.fft[0..15]` works; for a \
+                         Arithmetic on `time`, `mouse` and `a.fft[0..15]` works; for a \
                          value from the music, `H(pattern)` reads the transport",
                             step.entry.name
                         )));

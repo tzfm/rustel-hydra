@@ -55,6 +55,11 @@ pub const SOURCES: usize = crate::HYDRA_SOURCE_SLOTS;
 const OUTPUT_TEXTURE_COPIES: u64 = (OUTPUTS as u64 + 1) * 2;
 const MAX_AGGREGATE_OUTPUT_PIXELS: u64 = crate::HYDRA_MAX_OUTPUT_PIXELS * OUTPUT_TEXTURE_COPIES;
 
+/// Where the pointer's `vec2` sits in the globals block, after the audio.
+const MOUSE_OFFSET: usize = 16 + crate::HYDRA_AUDIO_BINS * 4;
+/// The globals block, padded to std140's sixteen bytes.
+const GLOBALS_BYTES: usize = MOUSE_OFFSET + 16;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct OutputLayout {
     width: u32,
@@ -422,6 +427,8 @@ pub struct NativeRenderer {
     signals: wgpu::Buffer,
     /// `a.fft`, what the engine says it is playing.
     audio: [f32; crate::HYDRA_AUDIO_BINS],
+    /// `mouse`, from 0 to 1 across the picture from its top-left corner.
+    pointer: [f32; 2],
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     /// `o0`-`o3`, each double-buffered for feedback.
@@ -568,11 +575,12 @@ impl NativeRenderer {
             push_constant_ranges: &[],
         });
         // std140: `vec2` at 0, `float` at 8, then four `vec4`s beginning on a
-        // sixteen-byte boundary. Sixteen bands cover shared sketches that use
-        // `a.setBins(...)` while keeping one fixed pipeline layout.
+        // sixteen-byte boundary, then the pointer's `vec2`. Sixteen bands
+        // cover shared sketches that use `a.setBins(...)` while keeping one
+        // fixed pipeline layout.
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("hydra globals"),
-            size: (16 + crate::HYDRA_AUDIO_BINS * 4) as u64,
+            size: GLOBALS_BYTES as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -624,6 +632,7 @@ impl NativeRenderer {
             globals,
             signals,
             audio: [0.0; crate::HYDRA_AUDIO_BINS],
+            pointer: [0.0; 2],
             layout,
             sampler,
             outputs,
@@ -829,6 +838,12 @@ impl NativeRenderer {
         self.audio = bands;
     }
 
+    /// Set where `mouse` is, from 0 to 1 across the picture from its
+    /// top-left corner. The shader reads it in pixels, as hydra does.
+    pub fn set_pointer(&mut self, x: f32, y: f32) {
+        self.pointer = [x, y];
+    }
+
     /// Set what `H(pattern)` reads this frame, one value per signal slot.
     pub fn set_signals(&self, values: &[f32]) {
         let mut packed = [0f32; MAX_SIGNALS];
@@ -871,13 +886,18 @@ impl NativeRenderer {
             self.pipelines_built += 1;
         }
 
-        let mut globals = [0u8; 16 + crate::HYDRA_AUDIO_BINS * 4];
+        let mut globals = [0u8; GLOBALS_BYTES];
         globals[0..4].copy_from_slice(&(self.width as f32).to_ne_bytes());
         globals[4..8].copy_from_slice(&(self.height as f32).to_ne_bytes());
         globals[8..12].copy_from_slice(&time.to_ne_bytes());
         for (band, value) in self.audio.iter().enumerate() {
             let at = 16 + band * 4;
             globals[at..at + 4].copy_from_slice(&value.to_ne_bytes());
+        }
+        let size = [self.width as f32, self.height as f32];
+        for (axis, (value, edge)) in self.pointer.iter().zip(size).enumerate() {
+            let at = MOUSE_OFFSET + axis * 4;
+            globals[at..at + 4].copy_from_slice(&(value * edge).to_ne_bytes());
         }
         self.queue.write_buffer(&self.globals, 0, &globals);
 

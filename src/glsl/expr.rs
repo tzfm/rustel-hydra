@@ -1,18 +1,22 @@
 //! Compile the small expressions a Hydra sketch writes as callbacks.
 //!
 //! Callback expressions such as `osc(() => time * 0.05)` are compiled into
-//! GLSL. The shader reads `time` and audio bands from uniforms; the renderer
-//! does not execute JavaScript callbacks.
+//! GLSL. The shader reads `time`, the pointer and audio bands from uniforms;
+//! the renderer does not execute JavaScript callbacks.
 //!
 //! Supported expressions are limited to arithmetic, parentheses, a handful of
-//! `Math` functions, `time`, `width`, `height`, and `a.fft[n]`. Unsupported
-//! expressions are rejected rather than silently changing the sketch's
-//! behavior. `Math.random()` is a new value each frame, the same on every
-//! pixel, as a callback Hydra runs once a frame gives. It hashes `time`, so it
-//! holds while the clock stands still.
+//! `Math` functions, `time`, `width`, `height`, `mouse.x`, `mouse.y` and
+//! `a.fft[n]`. Unsupported expressions are rejected rather than silently
+//! changing the sketch's behavior. `Math.random()` is a new value each frame,
+//! the same on every pixel, as a callback Hydra runs once a frame gives. It
+//! hashes `time`, so it holds while the clock stands still.
 
 /// The first `vec4` in the fixed-capacity audio uniform backing `a.fft`.
 pub const AUDIO_UNIFORM: &str = "_audio";
+
+/// The pointer behind `mouse.x` and `mouse.y`, in pixels of the picture from
+/// its top-left corner, as hydra's `mouse` reads the page.
+pub const MOUSE_UNIFORM: &str = "_mouse";
 
 #[derive(Debug, PartialEq)]
 pub struct ExprError(pub String);
@@ -174,6 +178,12 @@ impl Expr<'_> {
         }
         if self.eat("height") {
             return Ok("resolution.y".into());
+        }
+        if self.eat("mouse.x") {
+            return Ok(format!("{MOUSE_UNIFORM}.x"));
+        }
+        if self.eat("mouse.y") {
+            return Ok(format!("{MOUSE_UNIFORM}.y"));
         }
         let number = self.number()?;
         // The digits go into the shader as written, and the shader reads them
@@ -406,5 +416,18 @@ mod tests {
             let error = compile(malformed).expect_err("not a number").to_string();
             assert!(error.contains("is not a number"), "{malformed}: {error}");
         }
+    }
+
+    #[test]
+    fn the_pointer_reads_its_uniform() {
+        assert_eq!(
+            compile("() => mouse.x / width - mouse.y").as_deref(),
+            Ok("((_mouse.x / resolution.x) - _mouse.y)")
+        );
+        assert!(
+            compile("() => mouse.z").is_err(),
+            "the pointer has two axes"
+        );
+        assert!(compile("() => mouse").is_err(), "a value, not the object");
     }
 }
