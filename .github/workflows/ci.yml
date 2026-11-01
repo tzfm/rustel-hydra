@@ -1,0 +1,70 @@
+name: CI
+
+# Format, lint and test on every pull request and main push.
+on:
+  # Branch pushes are covered by the pull_request run.
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # No incremental state to reuse on a clean checkout.
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  check:
+    name: Check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-latest
+          - name: macOS Apple Silicon
+            runner: macos-15
+          - name: Windows x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ matrix.name }}-${{ github.ref }}
+      cancel-in-progress: true
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml pins the compiler, rustfmt and clippy.
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+
+      # Pull requests restore only, so main never reuses a pull request's
+      # cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
+
+      # The render tests draw for real and skip when there is nothing to
+      # draw on. macOS has Metal and Windows has WARP. Linux needs a
+      # software Vulkan driver.
+      - name: Install a software Vulkan driver
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes mesa-vulkan-drivers
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
