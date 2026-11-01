@@ -346,6 +346,16 @@ mod tests {
         naga_accepts(&shader).unwrap_or_else(|error| panic!("{sketch}: {error}"));
     }
 
+    /// A score prints 3000 as `3e3` in a callback, and the shader takes it.
+    #[test]
+    fn a_callback_with_an_exponent_compiles() {
+        let sketch = "gradient().hue(() => mouse.x / 3e3).scale(1, 1, () => mouse.y / 1E-3).out()";
+        let node = crate::glsl::parse_chain(sketch).expect("the sketch parses");
+        let composed = crate::glsl::compose_full(&node, "highp").expect("the composer admits it");
+        let shader = uplift_with_signal_slots(&composed.shader, &composed.signals);
+        naga_accepts(&shader).unwrap_or_else(|error| panic!("{sketch}: {error}"));
+    }
+
     #[test]
     fn callback_operators_and_their_helpers_compile() {
         let sketch = "osc(() => time % 2 < 1 && mouse.x >= 0 || !time ? Math.atan2(1, 2) : Math.hypot(1, 2, 3), \

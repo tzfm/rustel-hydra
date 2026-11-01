@@ -271,8 +271,9 @@ impl Expr<'_> {
         if !crate::glsl::compose::shader_float(value) {
             return Err(ExprError(crate::glsl::compose::out_of_range(&number)));
         }
-        // GLSL wants a float where JavaScript is happy with an integer.
-        Ok(if number.contains('.') {
+        // GLSL wants a float where JavaScript is happy with an integer. An
+        // exponent already makes one.
+        Ok(if number.contains(['.', 'e', 'E']) {
             number
         } else {
             format!("{number}.0")
@@ -401,6 +402,19 @@ impl Expr<'_> {
                 String::from_utf8_lossy(&self.bytes[self.at..])
             )));
         }
+        // An exponent, as JavaScript writes `3e3` and the score's own
+        // printer writes 3000. GLSL reads the same form.
+        let digits_at = |at: usize| self.bytes.get(at).is_some_and(u8::is_ascii_digit);
+        if matches!(self.bytes.get(self.at), Some(b'e' | b'E')) {
+            let signed = matches!(self.bytes.get(self.at + 1), Some(b'+' | b'-'));
+            let first = self.at + 1 + usize::from(signed);
+            if digits_at(first) {
+                self.at = first;
+                while digits_at(self.at) {
+                    self.at += 1;
+                }
+            }
+        }
         Ok(String::from_utf8_lossy(&self.bytes[start..self.at]).into_owned())
     }
 }
@@ -485,9 +499,9 @@ mod tests {
 
     #[test]
     fn a_literal_no_shader_float_can_hold_is_refused_by_name() {
-        // Digits only - this grammar has no exponent - so overflow is spelled
-        // out: forty digits are finite as f64 but not as the f32 the shader
-        // reads, and three hundred and ten overflow f64 itself.
+        // Overflow spelled out in digits: forty digits are finite as f64 but
+        // not as the f32 the shader reads, and three hundred and ten
+        // overflow f64 itself.
         let forty = format!("1{}", "0".repeat(39));
         let past_f64 = format!("1{}", "0".repeat(309));
         // Just past the point where an f32 rounds to infinity.
@@ -526,6 +540,28 @@ mod tests {
             let error = compile(malformed).expect_err("not a number").to_string();
             assert!(error.contains("is not a number"), "{malformed}: {error}");
         }
+    }
+
+    /// A number with an exponent reads as JavaScript reads it. The score's
+    /// printer writes 3000 as `3e3`.
+    #[test]
+    fn an_exponent_reads_as_javascript_writes_it() {
+        assert_eq!(
+            compile("() => mouse.x / 3e3").as_deref(),
+            Ok("(_mouse.x / 3e3)")
+        );
+        assert_eq!(compile("() => 1.5E-2").as_deref(), Ok("1.5E-2"));
+        assert_eq!(compile("() => 2e+1 - 1").as_deref(), Ok("(2e+1 - 1.0)"));
+        assert_eq!(compile("() => -1e-3").as_deref(), Ok("(-1e-3)"));
+
+        let error = compile("() => 1e39").expect_err("past f32").to_string();
+        assert!(
+            error.contains("is out of range for a shader float") && error.contains("`1e39"),
+            "{error}"
+        );
+        // An `e` with no digits after it is not an exponent.
+        assert!(compile("() => 2e").is_err());
+        assert!(compile("() => 2e-").is_err());
     }
 
     #[test]
