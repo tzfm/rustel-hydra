@@ -8,7 +8,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::renderer_is_available;
+use common::gpu_if_renderer;
 use rustel_hydra::HydraHost;
 
 /// The share of a rendered frame that is fully opaque, as a percentage.
@@ -41,10 +41,10 @@ fn opaque_percent(code: &str) -> u8 {
 
 #[test]
 fn a_transform_that_writes_alpha_reaches_the_terminal_with_it() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         println!("no adapter and no software rasteriser - skipping");
         return;
-    }
+    };
 
     // An oscillator fills the frame. Every pixel is opaque, and a backdrop of
     // it covers the screen - which is what it does upstream too.
