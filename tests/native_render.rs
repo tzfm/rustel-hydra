@@ -5,6 +5,8 @@
 //! a frame: a shader that fails to compile and one that draws black are the
 //! same thing from the outside.
 
+mod common;
+
 use rustel_hydra::glsl::{FUNCTIONS, Kind};
 use rustel_hydra::native::NativeRenderer;
 use rustel_hydra::{HydraCall, HydraNode};
@@ -54,6 +56,7 @@ fn exercise(name: &str, kind: Kind) -> HydraNode {
 
 #[test]
 fn every_transform_in_the_table_renders() {
+    let _gpu = common::gpu();
     let mut renderer = match NativeRenderer::new(64, 64) {
         Ok(renderer) => renderer,
         Err(error) => {
@@ -97,6 +100,7 @@ fn every_transform_in_the_table_renders() {
 /// wrong swap leaves the picture black or stops it evolving.
 #[test]
 fn a_sketch_can_read_the_output_it_draws_into() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(64, 64) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -152,6 +156,7 @@ fn a_sketch_can_read_the_output_it_draws_into() {
 /// `.out(o2)` draws into o2, and o0 is left alone.
 #[test]
 fn a_chain_lands_in_the_output_it_names() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(32, 32) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -174,6 +179,7 @@ fn a_chain_lands_in_the_output_it_names() {
 
 #[test]
 fn bare_render_uses_a_display_target_without_mutating_o0() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(32, 32) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -212,6 +218,7 @@ fn bare_render_uses_a_display_target_without_mutating_o0() {
 
 #[test]
 fn prev_buffer_tracks_the_nonzero_output_being_drawn() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(32, 32) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -243,6 +250,7 @@ fn prev_buffer_tracks_the_nonzero_output_being_drawn() {
 
 #[test]
 fn hush_clears_both_halves_of_every_output() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -303,6 +311,7 @@ fn hush_clears_both_halves_of_every_output() {
 /// `feedStrudel`'s half: a picture goes into `s0` and a sketch samples it.
 #[test]
 fn a_source_picture_reaches_the_shader() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(32, 32) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -430,6 +439,7 @@ fn a_source_picture_reaches_the_shader() {
 /// `H(pattern)` reaches the picture, and changing it changes the picture.
 #[test]
 fn a_signal_drives_the_shader() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(32, 32) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -467,6 +477,7 @@ fn a_signal_drives_the_shader() {
 
 #[test]
 fn the_seventeenth_signal_keeps_its_protocol_slot_on_the_gpu() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -499,6 +510,7 @@ fn the_seventeenth_signal_keeps_its_protocol_slot_on_the_gpu() {
 
 #[test]
 fn fft_bin_six_reaches_the_fixed_capacity_shader_uniform() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -536,6 +548,7 @@ fn fft_bin_six_reaches_the_fixed_capacity_shader_uniform() {
 /// `render()` shows all four outputs at once, in quadrants.
 #[test]
 fn render_all_composites_the_four_outputs() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(64, 64) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -583,6 +596,7 @@ fn render_all_composites_the_four_outputs() {
 /// alignment. It follows a resize, a source upload and a clear.
 #[test]
 fn the_footprint_counts_the_textures_and_buffers_and_follows_them() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(64, 64) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -637,6 +651,7 @@ fn the_footprint_counts_the_textures_and_buffers_and_follows_them() {
 /// the ten. `hush()` writes all ten, and a resize starts over with none.
 #[test]
 fn the_footprint_counts_as_resident_only_the_textures_written() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(64, 64) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -688,6 +703,7 @@ fn the_footprint_counts_as_resident_only_the_textures_written() {
 /// is 8, so `mouse.x / width` is a half and `mouse.y / 16` is a quarter.
 #[test]
 fn the_pointer_reaches_the_shader_in_pixels() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
         eprintln!("skipped: nothing to render on");
         return;
@@ -725,6 +741,7 @@ fn the_pointer_reaches_the_shader_in_pixels() {
 /// the right, and a comparison counts as 1 or 0.
 #[test]
 fn callback_operators_count_as_javascript_does() {
+    let _gpu = common::gpu();
     let Ok(mut renderer) = NativeRenderer::new(16, 16) else {
         eprintln!("skipped: nothing to render on");
         return;

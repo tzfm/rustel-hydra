@@ -1,15 +1,30 @@
 //! Shared scaffolding for the renderer suites.
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use rustel_hydra::{
     HYDRA_HEIGHT, HYDRA_PROGRAM_VERSION, HYDRA_WIDTH, HydraCall, HydraNode, HydraOptions,
     HydraProgram, HydraStatement,
 };
 
-/// Rendering requires a GPU adapter or software rasteriser, but no screen.
-/// If neither is available, report the skipped rendering check.
+static GPU: Mutex<()> = Mutex::new(());
+
+/// Hold this while a test owns a renderer. The Vulkan loader on some Linux
+/// hosts crashes when renderers in parallel threads name GPU objects, as
+/// debug builds do. The host runs one renderer at a time, so tests do too.
 #[allow(dead_code)]
-pub fn renderer_is_available() -> bool {
-    rustel_hydra::native::NativeRenderer::new(8, 8).is_ok()
+pub fn gpu() -> MutexGuard<'static, ()> {
+    GPU.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Rendering requires a GPU adapter or software rasteriser, but no screen.
+/// Holds the GPU for the test, or None when neither is available.
+#[allow(dead_code)]
+pub fn gpu_if_renderer() -> Option<MutexGuard<'static, ()>> {
+    let gpu = gpu();
+    rustel_hydra::native::NativeRenderer::new(8, 8)
+        .is_ok()
+        .then_some(gpu)
 }
 
 /// A bright moving grating at the requested render size. A black frame

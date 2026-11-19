@@ -8,7 +8,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{default_sketch, renderer_is_available, sketch};
+use common::{default_sketch, gpu_if_renderer, sketch};
 use rustel_hydra::glsl::parse_chain;
 use rustel_hydra::{
     HYDRA_HEIGHT, HYDRA_SIGNAL_SAMPLES, HYDRA_SIGNAL_STEP_MS, HYDRA_WIDTH, HydraEvent, HydraHost,
@@ -71,10 +71,10 @@ fn lit_frame_from(frames: &rustel_hydra::HydraFrames, width: u16) -> (u16, u16) 
 
 #[test]
 fn a_sketch_renders_resizes_and_stops() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     let frames = host.frames();
     assert!(!frames.wanted(), "nothing has been asked for yet");
@@ -338,10 +338,10 @@ fn a_sketch_renders_resizes_and_stops() {
 /// `feedStrudel`: the terminal itself becomes the texture `s0` samples.
 #[test]
 fn the_terminal_reaches_a_sketch_that_asked_for_it() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     use rustel_hydra::{HydraTuiCell, HydraTuiFrame};
 
     let mut host = HydraHost::new();
@@ -421,10 +421,10 @@ fn settles(
 /// few seconds after its picture stops, or once the host is closed.
 #[test]
 fn a_renderer_is_counted_while_it_is_open_and_not_once_it_is_retired() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     assert!(host.memory().is_empty(), "nothing before a sketch");
 
@@ -537,10 +537,10 @@ fn failures_across(host: &mut HydraHost, passes: usize) -> Vec<String> {
 /// every frame is still read back.
 #[test]
 fn a_persistent_failure_is_said_once_not_every_frame() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     host.set_drawing(true);
     host.set_frame_size(64, 64);
@@ -565,10 +565,10 @@ fn a_persistent_failure_is_said_once_not_every_frame() {
 /// Two chains with different persistent failures are each reported once.
 #[test]
 fn chains_that_fail_differently_are_each_said_once() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     host.set_drawing(true);
     host.set_frame_size(64, 64);
@@ -591,10 +591,10 @@ fn chains_that_fail_differently_are_each_said_once() {
 /// oversized delivery is reported once.
 #[test]
 fn a_clean_frame_rearms_the_said_once_latch() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     host.set_drawing(true);
     host.apply(sketch(64, 64)).expect("install a sketch");
@@ -617,10 +617,10 @@ fn a_clean_frame_rearms_the_said_once_latch() {
 /// the failure twice.
 #[test]
 fn a_new_program_rearms_the_said_once_latch() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     host.set_drawing(true);
     host.set_frame_size(64, 64);
@@ -641,10 +641,10 @@ fn a_new_program_rearms_the_said_once_latch() {
 /// A failing theme is reported once per install, through its own latch.
 #[test]
 fn a_failing_theme_is_said_once_not_every_frame() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     for install in ["installed", "installed again"] {
         host.theme(Some("osc(10, 0.1, 0.3).sum().out()"))
@@ -661,10 +661,10 @@ fn a_failing_theme_is_said_once_not_every_frame() {
 /// A raw program reads back the output its chain draws to.
 #[test]
 fn a_raw_sketch_reads_the_output_its_chain_drew() {
-    if !renderer_is_available() {
+    let Some(_gpu) = gpu_if_renderer() else {
         eprintln!("skipped: no GPU and no software rasteriser");
         return;
-    }
+    };
     let mut host = HydraHost::new();
     host.set_drawing(true);
     host.apply(from_source("osc(20, 0.1, 1.2).out(o1)", 128, 128))
